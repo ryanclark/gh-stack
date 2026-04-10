@@ -1,0 +1,29 @@
+/* Custom styles for gh-stack docs */
+
+:root {
+	--sl-color-accent-low: #3730a3;
+	--sl-color-accent: #6366f1;
+	--sl-color-accent-high: #c7d2fe;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #c7d2fe;
+	--sl-color-accent: #4f46e5;
+	--sl-color-accent-high: #312e81;
+}
+
+/* Show full nav by default, switch to hamburger on narrow viewports */
+@media (max-width: 900px) {
+	.custom-header-links {
+		display: none !important;
+	}
+	.tablet-nav-wrapper {
+		display: block !important;
+	}
+}
+
+@media (min-width: 901px) {
+	.tablet-nav-wrapper {
+		display: none !important;
+	}
+}
