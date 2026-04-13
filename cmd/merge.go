@@ -49,7 +49,7 @@ func runMerge(cfg *config.Config, target string) error {
 	// Resolve which branch to operate on.
 	var br *stack.BranchRef
 	if target != "" {
-		_, br, err = resolvePR(result.StackFile, target)
+		_, br, err = resolvePR(cfg, result.StackFile, target)
 		if err != nil {
 			cfg.Errorf("%s", err)
 			return ErrNotInStack

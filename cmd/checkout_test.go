@@ -618,6 +618,107 @@ func TestCheckout_NumericTarget_ClosedMergedPR(t *testing.T) {
 	assert.False(t, sf.Stacks[0].Branches[1].PullRequest.Merged)
 }
 
+func TestCheckout_NumericTarget_MergedBranchDeletedFromRemote(t *testing.T) {
+	gitDir := t.TempDir()
+	var checkedOut string
+
+	restore := git.SetOps(&git.MockOps{
+		GitDirFn:        func() (string, error) { return gitDir, nil },
+		CurrentBranchFn: func() (string, error) { return "main", nil },
+		BranchExistsFn: func(name string) bool {
+			return name == "main"
+		},
+		FetchFn: func(remote string) error { return nil },
+		CreateBranchFn: func(name, base string) error {
+			// Simulate merged branch deleted from remote: origin/feat-1 doesn't exist
+			if base == "origin/feat-1" {
+				return fmt.Errorf("failed to run git: fatal: not a valid object name: 'origin/feat-1'")
+			}
+			return nil
+		},
+		SetUpstreamTrackingFn: func(branch, remote string) error { return nil },
+		ResolveRemoteFn: func(branch string) (string, error) {
+			return "origin", nil
+		},
+		CheckoutBranchFn: func(name string) error {
+			checkedOut = name
+			return nil
+		},
+		RevParseFn: func(ref string) (string, error) {
+			return "abc123", nil
+		},
+		RevParseMultiFn: func(refs []string) ([]string, error) {
+			shas := make([]string, len(refs))
+			for i := range refs {
+				shas[i] = "abc123"
+			}
+			return shas, nil
+		},
+	})
+	defer restore()
+
+	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
+
+	cfg, outR, errR := config.NewTestConfig()
+	cfg.GitHubClientOverride = &github.MockClient{
+		ListStacksFn: func() ([]github.RemoteStack, error) {
+			return []github.RemoteStack{
+				{ID: 60, PullRequests: []int{10, 11}},
+			}, nil
+		},
+		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
+			prs := map[int]*github.PullRequest{
+				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
+				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
+			}
+			return prs[number], nil
+		},
+	}
+
+	err := runCheckout(cfg, &checkoutOptions{target: "11"})
+	output := collectOutput(cfg, outR, errR)
+
+	require.NoError(t, err)
+	assert.Equal(t, "feat-2", checkedOut)
+	assert.Contains(t, output, "Skipping merged branch feat-1")
+	assert.Contains(t, output, "Imported stack with 2 branches")
+}
+
+func TestCheckout_NumericTarget_AllPRsMerged(t *testing.T) {
+	gitDir := t.TempDir()
+
+	restore := git.SetOps(&git.MockOps{
+		GitDirFn:        func() (string, error) { return gitDir, nil },
+		CurrentBranchFn: func() (string, error) { return "main", nil },
+	})
+	defer restore()
+
+	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
+
+	cfg, outR, errR := config.NewTestConfig()
+	cfg.GitHubClientOverride = &github.MockClient{
+		ListStacksFn: func() ([]github.RemoteStack, error) {
+			return []github.RemoteStack{
+				{ID: 70, PullRequests: []int{10, 11}},
+			}, nil
+		},
+		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
+			prs := map[int]*github.PullRequest{
+				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
+				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/11"},
+			}
+			return prs[number], nil
+		},
+	}
+
+	err := runCheckout(cfg, &checkoutOptions{target: "11"})
+	output := collectOutput(cfg, outR, errR)
+
+	assert.ErrorIs(t, err, ErrSilent)
+	assert.Contains(t, output, "All PRs in this stack have been merged")
+	assert.Contains(t, output, "gh stack init")
+}
+
 func TestCheckout_NumericTarget_APIError(t *testing.T) {
 	gitDir := t.TempDir()
 	restore := git.SetOps(&git.MockOps{

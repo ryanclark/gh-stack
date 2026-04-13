@@ -156,7 +156,8 @@ func TestResolvePR_ByPRNumber(t *testing.T) {
 		},
 	}
 
-	s, br, err := resolvePR(sf, "42")
+	cfg, _, _ := config.NewTestConfig()
+	s, br, err := resolvePR(cfg, sf, "42")
 	assert.NoError(t, err)
 	assert.Equal(t, "feat-1", br.Branch)
 	assert.Equal(t, 42, br.PullRequest.Number)
@@ -176,7 +177,8 @@ func TestResolvePR_ByPRURL(t *testing.T) {
 		},
 	}
 
-	s, br, err := resolvePR(sf, "https://github.com/o/r/pull/42")
+	cfg, _, _ := config.NewTestConfig()
+	s, br, err := resolvePR(cfg, sf, "https://github.com/o/r/pull/42")
 	assert.NoError(t, err)
 	assert.Equal(t, "feat-1", br.Branch)
 	assert.Equal(t, "main", s.Trunk.Branch)
@@ -196,7 +198,8 @@ func TestResolvePR_ByBranchName(t *testing.T) {
 		},
 	}
 
-	s, br, err := resolvePR(sf, "feat-2")
+	cfg, _, _ := config.NewTestConfig()
+	s, br, err := resolvePR(cfg, sf, "feat-2")
 	assert.NoError(t, err)
 	assert.Equal(t, "feat-2", br.Branch)
 	assert.Equal(t, 43, br.PullRequest.Number)
@@ -214,7 +217,8 @@ func TestResolvePR_NotFound(t *testing.T) {
 		},
 	}
 
-	_, _, err := resolvePR(sf, "nonexistent")
+	cfg, _, _ := config.NewTestConfig()
+	_, _, err := resolvePR(cfg, sf, "nonexistent")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no locally tracked stack found")
 }
@@ -234,7 +238,8 @@ func TestResolvePR_URLPrecedesNumber(t *testing.T) {
 		},
 	}
 
-	_, br, err := resolvePR(sf, "https://github.com/o/r/pull/99")
+	cfg, _, _ := config.NewTestConfig()
+	_, br, err := resolvePR(cfg, sf, "https://github.com/o/r/pull/99")
 	assert.NoError(t, err)
 	assert.Equal(t, 99, br.PullRequest.Number)
 }

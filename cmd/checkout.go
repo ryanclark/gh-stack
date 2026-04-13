@@ -92,7 +92,7 @@ func runCheckout(cfg *config.Config, opts *checkoutOptions) error {
 	} else {
 		// Non-numeric target — resolve against local stacks only
 		var br *stack.BranchRef
-		s, br, err = resolvePR(sf, opts.target)
+		s, br, err = resolvePR(cfg, sf, opts.target)
 		if err != nil {
 			cfg.Errorf("%s", err)
 			return ErrNotInStack
@@ -194,15 +194,24 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 	// Determine trunk (base branch of the first PR) and the target branch
 	trunk := prs[0].BaseRefName
 	var targetBranch string
+	allMerged := true
 	for _, pr := range prs {
 		if pr.Number == prNumber {
 			targetBranch = pr.HeadRefName
-			break
+		}
+		if !pr.Merged {
+			allMerged = false
 		}
 	}
 	if targetBranch == "" {
 		cfg.Errorf("could not determine branch for PR #%d", prNumber)
 		return nil, "", ErrAPIFailure
+	}
+
+	if allMerged {
+		cfg.Infof("All PRs in this stack have been merged")
+		cfg.Printf("To start a new stack, use `%s`", cfg.ColorCyan("gh stack init"))
+		return nil, "", ErrSilent
 	}
 
 	remoteStackID := strconv.Itoa(remoteStack.ID)
@@ -461,7 +470,9 @@ func importRemoteStack(
 		}
 	}
 
-	// Create local branches for each PR's head branch
+	// Create local branches for each PR's head branch.
+	// Skip merged PRs whose branches were deleted from the remote —
+	// these no longer exist upstream and can't be created locally.
 	for _, pr := range prs {
 		branch := pr.HeadRefName
 		if git.BranchExists(branch) {
@@ -469,6 +480,10 @@ func importRemoteStack(
 		}
 		remoteRef := remote + "/" + branch
 		if err := git.CreateBranch(branch, remoteRef); err != nil {
+			if pr.Merged {
+				cfg.Infof("Skipping merged branch %s", branch)
+				continue
+			}
 			cfg.Errorf("failed to pull branch %s from %s: %v", branch, remoteRef, err)
 			return nil, ErrSilent
 		}

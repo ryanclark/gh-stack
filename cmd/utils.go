@@ -319,7 +319,7 @@ func activeBranchNames(s *stack.Stack) []string {
 
 // resolvePR resolves a user-provided target to a stack and branch using
 // waterfall logic: PR URL → PR number → branch name.
-func resolvePR(sf *stack.StackFile, target string) (*stack.Stack, *stack.BranchRef, error) {
+func resolvePR(cfg *config.Config, sf *stack.StackFile, target string) (*stack.Stack, *stack.BranchRef, error) {
 	// Try parsing as a GitHub PR URL (e.g. https://github.com/owner/repo/pull/42).
 	if prNumber, ok := parsePRURL(target); ok {
 		s, b := sf.FindStackByPRNumber(prNumber)
@@ -352,9 +352,9 @@ func resolvePR(sf *stack.StackFile, target string) (*stack.Stack, *stack.BranchR
 
 	return nil, nil, fmt.Errorf(
 		"no locally tracked stack found for %q\n"+
-			"This command currently only works with stacks created locally.\n"+
-			"Server-side stack discovery will be available in a future release.",
+			"To pull down a stack from remote, use the PR number: `%s`",
 		target,
+		cfg.ColorCyan("gh stack checkout <pr-number>"),
 	)
 }
 
