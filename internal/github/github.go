@@ -17,16 +17,17 @@ type MergeQueueEntry struct {
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	ID              string           `graphql:"id"`
-	Number          int              `graphql:"number"`
-	Title           string           `graphql:"title"`
-	State           string           `graphql:"state"`
-	URL             string           `graphql:"url"`
-	HeadRefName     string           `graphql:"headRefName"`
-	BaseRefName     string           `graphql:"baseRefName"`
-	IsDraft         bool             `graphql:"isDraft"`
-	Merged          bool             `graphql:"merged"`
-	MergeQueueEntry *MergeQueueEntry `graphql:"mergeQueueEntry"`
+	ID                string           `graphql:"id"`
+	Number            int              `graphql:"number"`
+	Title             string           `graphql:"title"`
+	State             string           `graphql:"state"`
+	URL               string           `graphql:"url"`
+	HeadRefName       string           `graphql:"headRefName"`
+	BaseRefName       string           `graphql:"baseRefName"`
+	IsDraft           bool             `graphql:"isDraft"`
+	Merged            bool             `graphql:"merged"`
+	IsCrossRepository bool             `graphql:"isCrossRepository"`
+	MergeQueueEntry   *MergeQueueEntry `graphql:"mergeQueueEntry"`
 }
 
 // IsQueued reports whether the pull request is currently in a merge queue.
@@ -419,11 +420,15 @@ func DiscoverPRStack(client ClientOps, prNumber int) (string, []*PullRequest, er
 
 	// Walk down toward trunk: find PRs whose head is our base.
 	// Uses FindAnyPRForBranch to also discover merged parent PRs.
+	// Skips cross-repository (fork) PRs and PRs where head == base.
 	var parents []*PullRequest
 	current := startPR
 	for {
 		parent, err := client.FindAnyPRForBranch(current.BaseRefName)
 		if err != nil || parent == nil || seen[parent.Number] {
+			break
+		}
+		if parent.IsCrossRepository || parent.HeadRefName == parent.BaseRefName {
 			break
 		}
 		seen[parent.Number] = true
@@ -448,10 +453,14 @@ func DiscoverPRStack(client ClientOps, prNumber int) (string, []*PullRequest, er
 	chain = append(chain, startPR)
 
 	// Walk up away from trunk: find open PRs whose base is our head.
+	// Skips cross-repository (fork) PRs.
 	current = startPR
 	for {
 		child, err := client.FindPRByBaseBranch(current.HeadRefName)
 		if err != nil || child == nil || seen[child.Number] {
+			break
+		}
+		if child.IsCrossRepository || child.HeadRefName == child.BaseRefName {
 			break
 		}
 		seen[child.Number] = true
