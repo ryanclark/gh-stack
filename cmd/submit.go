@@ -146,7 +146,7 @@ func runSubmit(cfg *config.Config, opts *submitOptions) error {
 			if title != originalTitle && commitBody != "" {
 				prBody = originalTitle + "\n\n" + commitBody
 			}
-			body := generatePRBody(prBody)
+			body := generatePRBody(prBody, parentPRNumber(s, i))
 
 			newPR, createErr := client.CreatePR(baseBranch, b.Branch, title, body, opts.draft)
 			if createErr != nil {
@@ -206,9 +206,32 @@ func defaultPRTitleBody(base, head string) (string, string) {
 	return humanize(head), ""
 }
 
-// generatePRBody returns the PR body from the commit body, or empty string.
-func generatePRBody(commitBody string) string {
-	return commitBody
+// generatePRBody returns the PR body, prepending a "Requires #N" line
+// if this PR depends on another PR in the stack.
+func generatePRBody(commitBody string, dependsOn int) string {
+	var parts []string
+	if dependsOn > 0 {
+		parts = append(parts, fmt.Sprintf("Requires #%d", dependsOn))
+	}
+	if commitBody != "" {
+		parts = append(parts, commitBody)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// parentPRNumber returns the PR number of the nearest non-merged ancestor
+// branch in the stack, or 0 if there is none (i.e. this is the bottom branch).
+func parentPRNumber(s *stack.Stack, branchIndex int) int {
+	for j := branchIndex - 1; j >= 0; j-- {
+		if s.Branches[j].IsMerged() {
+			continue
+		}
+		if s.Branches[j].PullRequest != nil {
+			return s.Branches[j].PullRequest.Number
+		}
+		return 0
+	}
+	return 0
 }
 
 // humanize replaces hyphens and underscores with spaces.

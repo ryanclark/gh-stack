@@ -14,8 +14,10 @@ import (
 )
 
 func TestGeneratePRBody(t *testing.T) {
-	assert.Equal(t, "", generatePRBody(""))
-	assert.Equal(t, "Some description", generatePRBody("Some description"))
+	assert.Equal(t, "", generatePRBody("", 0))
+	assert.Equal(t, "Some description", generatePRBody("Some description", 0))
+	assert.Equal(t, "Requires #42", generatePRBody("", 42))
+	assert.Equal(t, "Requires #42\n\nSome description", generatePRBody("Some description", 42))
 }
 
 // newSubmitMock creates a MockOps pre-configured for submit tests.
