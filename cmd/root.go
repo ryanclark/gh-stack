@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/github/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/config"
 	"github.com/spf13/cobra"
 )
 

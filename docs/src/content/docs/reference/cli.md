@@ -6,7 +6,7 @@ description: Complete reference for all gh stack commands.
 ## Installation
 
 ```sh
-gh extension install github/gh-stack
+gh extension install ryanclark/gh-stack
 ```
 
 Requires the [GitHub CLI](https://cli.github.com/) (`gh`) v2.0+.
@@ -281,19 +281,15 @@ gh stack push --remote upstream
 
 ### `gh stack unstack`
 
-Remove a stack from local tracking and delete it on GitHub. Also available as `gh stack delete`.
+Remove a stack from local tracking. Also available as `gh stack delete`.
 
 ```sh
-gh stack unstack [flags] [branch]
+gh stack unstack [branch]
 ```
 
-Deletes the stack on GitHub first, then removes it from local tracking. If the remote deletion fails, the local state is left untouched so you can retry. Use `--local` to skip the remote deletion and only remove local tracking.
+Removes the stack from local tracking (the `.git/gh-stack` file). This does not delete branches or PRs.
 
 This is useful when you need to restructure a stack — remove a branch, reorder branches, rename branches, or make other large changes. After unstacking, use `gh stack init --adopt` to re-create the stack with the desired structure.
-
-| Flag | Description |
-|------|-------------|
-| `--local` | Only delete the stack locally (keep it on GitHub) |
 
 | Argument | Description |
 |----------|-------------|
@@ -302,11 +298,8 @@ This is useful when you need to restructure a stack — remove a branch, reorder
 **Examples:**
 
 ```sh
-# Delete the stack on GitHub and remove local tracking
+# Remove the stack from local tracking
 gh stack unstack
-
-# Only remove local tracking
-gh stack unstack --local
 
 # Specify a branch to identify which stack
 gh stack unstack feature-auth
@@ -417,7 +410,7 @@ Share feedback about gh-stack.
 gh stack feedback [title]
 ```
 
-Opens a GitHub Discussion in the [gh-stack repository](https://github.com/github/gh-stack) to submit feedback. Optionally provide a title for the discussion post.
+Opens a GitHub Discussion in the [gh-stack repository](https://github.com/ryanclark/gh-stack) to submit feedback. Optionally provide a title for the discussion post.
 
 **Examples:**
 

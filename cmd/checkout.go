@@ -6,12 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/prompter"
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	"github.com/github/gh-stack/internal/github"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/github"
+	"github.com/ryanclark/gh-stack/internal/stack"
 	"github.com/spf13/cobra"
 )
 
@@ -120,7 +119,7 @@ func runCheckout(cfg *config.Config, opts *checkoutOptions) error {
 // resolveNumericTarget handles the case where the user passes a pure integer.
 // It tries, in order:
 //  1. Local stack lookup by PR number
-//  2. Remote API discovery (ListStacks → find → import)
+//  2. Remote discovery by following PR base/head branch chains
 //  3. Local stack lookup by branch name (for numeric branch names like "123")
 func resolveNumericTarget(cfg *config.Config, sf *stack.StackFile, gitDir string, prNumber int, raw string) (*stack.Stack, string, error) {
 	// 1. Try local PR number lookup
@@ -158,9 +157,9 @@ func resolveNumericTarget(cfg *config.Config, sf *stack.StackFile, gitDir string
 	return nil, "", remoteErr
 }
 
-// checkoutRemoteStack discovers a stack from GitHub for the given PR number,
-// reconciles it with any local state, and returns the resolved stack and
-// target branch name. The stack file is saved before returning.
+// checkoutRemoteStack discovers a stack from GitHub for the given PR number
+// by following PR base/head branch chains, reconciles it with any local state,
+// and returns the resolved stack and target branch name.
 func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string, prNumber int) (*stack.Stack, string, error) {
 	client, err := cfg.GitHubClient()
 	if err != nil {
@@ -168,31 +167,18 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 		return nil, "", ErrAPIFailure
 	}
 
-	// Step 1: List stacks and find one containing the target PR
-	remoteStack, err := findRemoteStackForPR(client, prNumber)
+	// Discover the stack by following PR base/head branch chains
+	trunk, prs, err := github.DiscoverPRStack(client, prNumber)
 	if err != nil {
-		var httpErr *api.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
-			cfg.Errorf("Stacked PRs are not enabled for this repository")
-			return nil, "", ErrAPIFailure
-		}
-		cfg.Errorf("failed to list stacks: %v", err)
+		cfg.Errorf("failed to discover stack for PR #%d: %v", prNumber, err)
 		return nil, "", ErrAPIFailure
 	}
-	if remoteStack == nil {
+	if len(prs) < 2 {
 		cfg.Errorf("PR #%d is not part of a stack on GitHub", prNumber)
 		return nil, "", ErrNotInStack
 	}
 
-	// Step 2: Fetch PR details for every PR in the remote stack
-	prs, err := fetchStackPRDetails(client, remoteStack.PullRequests)
-	if err != nil {
-		cfg.Errorf("failed to fetch PR details: %v", err)
-		return nil, "", ErrAPIFailure
-	}
-
-	// Determine trunk (base branch of the first PR) and the target branch
-	trunk := prs[0].BaseRefName
+	// Determine the target branch
 	var targetBranch string
 	allMerged := true
 	for _, pr := range prs {
@@ -214,22 +200,18 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 		return nil, "", ErrSilent
 	}
 
-	remoteStackID := strconv.Itoa(remoteStack.ID)
-
-	// Step 3: Check if the target branch is already in a local stack
+	// Check if the target branch is already in a local stack
 	localStack := findLocalStackForRemotePRs(sf, prs)
 
 	if localStack != nil {
-		// Sync remote PR metadata before comparing composition so locally
-		// tracked stacks with incomplete PR refs don't appear to conflict.
 		syncRemotePRState(localStack, prs)
 
-		// Case A: branch is in a local stack — check composition
-		if stackCompositionMatches(localStack, remoteStack.PullRequests) {
-			// Composition matches — checkout
-			if localStack.ID == "" {
-				localStack.ID = remoteStackID
-			}
+		remotePRNumbers := make([]int, len(prs))
+		for i, pr := range prs {
+			remotePRNumbers[i] = pr.Number
+		}
+
+		if stackCompositionMatches(localStack, remotePRNumbers) {
 			if err := stack.Save(gitDir, sf); err != nil {
 				return nil, "", handleSaveError(cfg, err)
 			}
@@ -238,14 +220,14 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 		}
 
 		// Composition mismatch — prompt for resolution
-		resolved, resolveErr := handleCompositionConflict(cfg, client, sf, localStack, remoteStack, prs, gitDir, trunk)
+		resolved, resolveErr := handleCompositionConflict(cfg, sf, localStack, prs, gitDir, trunk)
 		if resolveErr != nil {
 			return nil, "", resolveErr
 		}
 		return resolved, targetBranch, nil
 	}
 
-	// Case B/C: no matching local stack — import from remote
+	// No matching local stack — import from remote
 	remote, err := pickRemote(cfg, trunk, "")
 	if err != nil {
 		if !errors.Is(err, errInterrupt) {
@@ -254,7 +236,7 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 		return nil, "", ErrSilent
 	}
 
-	s, err := importRemoteStack(cfg, sf, gitDir, remote, trunk, prs, remoteStackID)
+	s, err := importRemoteStack(cfg, sf, gitDir, remote, trunk, prs)
 	if err != nil {
 		return nil, "", err
 	}
@@ -264,40 +246,6 @@ func checkoutRemoteStack(cfg *config.Config, sf *stack.StackFile, gitDir string,
 	}
 
 	return s, targetBranch, nil
-}
-
-// findRemoteStackForPR queries the list stacks API and returns the stack
-// containing the given PR number, or nil if no stack contains it.
-func findRemoteStackForPR(client github.ClientOps, prNumber int) (*github.RemoteStack, error) {
-	stacks, err := client.ListStacks()
-	if err != nil {
-		return nil, err
-	}
-	for i := range stacks {
-		for _, n := range stacks[i].PullRequests {
-			if n == prNumber {
-				return &stacks[i], nil
-			}
-		}
-	}
-	return nil, nil
-}
-
-// fetchStackPRDetails fetches PR details for each number in the stack.
-// Returns PRs in the same order as the input numbers.
-func fetchStackPRDetails(client github.ClientOps, prNumbers []int) ([]*github.PullRequest, error) {
-	prs := make([]*github.PullRequest, 0, len(prNumbers))
-	for _, n := range prNumbers {
-		pr, err := client.FindPRByNumber(n)
-		if err != nil {
-			return nil, fmt.Errorf("fetching PR #%d: %w", n, err)
-		}
-		if pr == nil {
-			return nil, fmt.Errorf("PR #%d not found", n)
-		}
-		prs = append(prs, pr)
-	}
-	return prs, nil
 }
 
 // findLocalStackForRemotePRs checks if any PR's branch is already tracked
@@ -338,10 +286,8 @@ func stackCompositionMatches(localStack *stack.Stack, remotePRNumbers []int) boo
 // local and remote stack composition. Returns the resolved stack.
 func handleCompositionConflict(
 	cfg *config.Config,
-	client github.ClientOps,
 	sf *stack.StackFile,
 	localStack *stack.Stack,
-	remoteStack *github.RemoteStack,
 	prs []*github.PullRequest,
 	gitDir string,
 	trunk string,
@@ -354,8 +300,8 @@ func handleCompositionConflict(
 			remoteBranches[i] = pr.HeadRefName
 		}
 		cfg.Printf("  Remote: (%s) <- %s", trunk, strings.Join(remoteBranches, " <- "))
-		cfg.Printf("  Unstack on remote or use `%s` to unstack locally",
-			cfg.ColorCyan("gh stack unstack --local"))
+		cfg.Printf("  Use `%s` to unstack locally, then retry",
+			cfg.ColorCyan("gh stack unstack"))
 		return nil, ErrConflict
 	}
 
@@ -370,7 +316,7 @@ func handleCompositionConflict(
 	p := prompter.New(cfg.In, cfg.Out, cfg.Err)
 	options := []string{
 		"Replace local stack with remote version",
-		"Delete remote stack and keep local version",
+		"Keep local version",
 		"Cancel",
 	}
 	selected, err := p.Select("How would you like to resolve this?", "", options)
@@ -382,8 +328,6 @@ func handleCompositionConflict(
 		}
 		return nil, ErrSilent
 	}
-
-	remoteStackID := strconv.Itoa(remoteStack.ID)
 
 	switch selected {
 	case 0:
@@ -398,7 +342,7 @@ func handleCompositionConflict(
 			return nil, ErrSilent
 		}
 
-		s, importErr := importRemoteStack(cfg, sf, gitDir, remote, trunk, prs, remoteStackID)
+		s, importErr := importRemoteStack(cfg, sf, gitDir, remote, trunk, prs)
 		if importErr != nil {
 			return nil, importErr
 		}
@@ -409,19 +353,7 @@ func handleCompositionConflict(
 		return s, nil
 
 	case 1:
-		// Delete remote stack, keep local
-		if err := client.DeleteStack(remoteStackID); err != nil {
-			var httpErr *api.HTTPError
-			if errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
-				cfg.Warningf("Remote stack already deleted")
-			} else {
-				cfg.Errorf("failed to delete remote stack: %v", err)
-				return nil, ErrAPIFailure
-			}
-		} else {
-			cfg.Successf("Remote stack deleted")
-		}
-		localStack.ID = ""
+		// Keep local version
 		if err := stack.Save(gitDir, sf); err != nil {
 			return nil, handleSaveError(cfg, err)
 		}
@@ -454,7 +386,6 @@ func importRemoteStack(
 	remote string,
 	trunk string,
 	prs []*github.PullRequest,
-	remoteStackID string,
 ) (*stack.Stack, error) {
 	// Fetch latest refs from remote
 	if err := git.Fetch(remote); err != nil {
@@ -507,7 +438,6 @@ func importRemoteStack(
 
 	trunkSHA, _ := git.RevParse(trunk)
 	newStack := stack.Stack{
-		ID: remoteStackID,
 		Trunk: stack.BranchRef{
 			Branch: trunk,
 			Head:   trunkSHA,

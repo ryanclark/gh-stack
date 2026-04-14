@@ -5,8 +5,8 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/browser"
 	"github.com/cli/go-gh/v2/pkg/prompter"
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/stack"
 	"github.com/spf13/cobra"
 )
 

@@ -38,7 +38,7 @@ Use this skill when the user wants to:
 The GitHub CLI (`gh`) v2.0+ must be installed and authenticated. Install the extension with:
 
 ```bash
-gh extension install github/gh-stack
+gh extension install ryanclark/gh-stack
 ```
 
 Before using `gh stack`, configure git to prevent interactive prompts:
@@ -379,7 +379,7 @@ echo "$output" | jq '[.branches[] | .isMerged] | all'
 Use `unstack` to tear down the stack, make structural changes, then re-init:
 
 ```bash
-# 1. Remove the stack (locally and on GitHub)
+# 1. Remove the stack from local tracking
 gh stack unstack
 
 # 2. Make structural changes — e.g. delete a branch, reorder, rename
@@ -538,7 +538,7 @@ gh stack submit --auto --draft
 
 - Pushes all active (non-merged) branches atomically (`--force-with-lease --atomic`)
 - Creates a new PR for each branch that doesn't have one (base set to the first non-merged ancestor branch)
-- After creating PRs, links them together as a **Stack** on GitHub (requires the repository to have stacks enabled)
+- Updates base branches for existing PRs if they've drifted
 - Syncs PR metadata for branches that already have PRs
 
 **PR title auto-generation (`--auto`):**
@@ -726,7 +726,7 @@ gh stack checkout 42
 gh stack checkout feature-auth
 ```
 
-When a PR number is provided (e.g. `123`), the command fetches the stack on GitHub, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch.
+When a PR number is provided (e.g. `123`), the command discovers the stack by following PR base/head branch chains, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch.
 
 > **⚠️ Agent warning:** If the local and remote stacks have different branch compositions, this command triggers an interactive conflict-resolution prompt that cannot be bypassed with a flag. To avoid this: run `gh stack unstack` first to remove the conflicting local stack, then retry `gh stack checkout <pr-number>`.
 
@@ -736,27 +736,20 @@ When a branch name is provided, the command resolves it against locally tracked 
 
 ### Remove a stack — `gh stack unstack`
 
-Tear down a stack so you can restructure it — remove a branch, reorder branches, rename branches, or make other large changes. After unstacking, use `gh stack init` to re-create the stack with the desired structure.
+Tear down a stack so you can restructure it — remove a branch, reorder branches, rename branches, or make other large changes. After unstacking, use `gh stack init` to re-create the stack with the desired structure. This removes local tracking only — it does not delete branches or PRs.
 
 ```
-gh stack unstack [flags] [branch]
+gh stack unstack [branch]
 ```
 
 ```bash
-# Tear down the stack (locally and on GitHub), then rebuild
+# Tear down the stack, then rebuild
 gh stack unstack
 gh stack init --base main --adopt branch-2 branch-1 branch-3 # reordered
-
-# Only remove local tracking (keep the stack on GitHub)
-gh stack unstack --local
 
 # Specify a branch to identify which stack to tear down
 gh stack unstack feature-auth
 ```
-
-| Flag | Description |
-|------|-------------|
-| `--local` | Only delete the stack locally (keep it on GitHub) |
 
 | Argument | Description |
 |----------|-------------|

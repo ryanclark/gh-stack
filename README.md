@@ -1,17 +1,13 @@
-# GitHub Stacked PRs
+# gh-stack
 
-A GitHub CLI extension for managing stacked branches and pull requests.
+A fork of [github/gh-stack](https://github.com/github/gh-stack) that works with any GitHub repository — no Stacked PRs private preview or special API access required. Stack discovery uses standard GitHub APIs (PR base/head branch chains) instead of the `cli_internal` endpoints.
 
-Stacked PRs break large changes into a chain of small, reviewable pull requests that build on each other. `gh stack` automates the tedious parts — creating branches, keeping them rebased, setting correct PR base branches, and navigating between layers.
-
-> [!NOTE]
-> Stacked PRs is currently in private preview. This CLI and the referenced functionality will not work unless the feature has been enabled for your repository.
-> You can sign up for the waitlist at [gh.io/stacksbeta](https://gh.io/stacksbeta).
+A GitHub CLI extension for managing stacked branches and pull requests. Stacked PRs break large changes into a chain of small, reviewable pull requests that build on each other. `gh stack` automates the tedious parts — creating branches, keeping them rebased, setting correct PR base branches, and navigating between layers.
 
 ## Installation
 
 ```sh
-gh extension install github/gh-stack
+gh extension install ryanclark/gh-stack
 ```
 
 Requires the [GitHub CLI](https://cli.github.com/) (`gh`) v2.0+.
@@ -21,7 +17,7 @@ Requires the [GitHub CLI](https://cli.github.com/) (`gh`) v2.0+.
 Install the gh-stack skill so your AI coding agent knows how to work with stacked PRs and the `gh stack` CLI:
 
 ```sh
-npx skills add github/gh-stack
+npx skills add ryanclark/gh-stack
 ```
 
 ## Quick start
@@ -60,7 +56,7 @@ main (trunk)
 
 The **bottom** of the stack is the branch closest to the trunk, and the **top** is the branch furthest from it. Each branch inherits from the one below it. Navigation commands (`up`, `down`, `top`, `bottom`) follow this model: `up` moves away from trunk, `down` moves toward it.
 
-When you submit, `gh stack` creates one PR per branch and links them together as a **Stack** on GitHub. Each PR's base is set to the branch below it in the stack, so reviewers see only the diff for that layer.
+When you submit, `gh stack` creates one PR per branch with each PR's base set to the branch below it in the stack, so reviewers see only the diff for that layer.
 
 ### Local tracking
 
@@ -170,7 +166,7 @@ Check out a stack from a pull request number or branch name.
 gh stack checkout [<pr-number> | <branch>]
 ```
 
-When a PR number is provided (e.g. `123`), the command fetches the stack on GitHub, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch. If the local and remote stacks have different compositions, you'll be prompted to resolve the conflict.
+When a PR number is provided (e.g. `123`), the command discovers the stack by following the PR base/head branch chain, pulls the branches, and sets up the stack locally. If the stack already exists locally and matches, it switches to the branch. If the local and remote stacks have different compositions, you'll be prompted to resolve the conflict.
 
 When a branch name is provided, the command resolves it against locally tracked stacks only.
 
@@ -281,15 +277,13 @@ gh stack push --remote upstream
 
 ### `gh stack submit`
 
-Push all branches and create/update PRs and the stack on GitHub.
+Push all branches and create/update PRs on GitHub.
 
 ```
 gh stack submit [flags]
 ```
 
-Creates a Stacked PR for every branch in the stack, pushing branches to the remote.
-
-After creating PRs, `submit` automatically creates a **Stack** on GitHub to link the PRs together. If the stack already exists on GitHub (e.g., from a previous submit), new PRs will be added to the top of the stack.
+Creates a PR for every branch in the stack, pushing branches to the remote. Each PR's base branch is set to the previous branch in the stack, so reviewers see only the diff for that layer.
 
 When creating new PRs, you will be prompted to enter a title for each one. Press Enter to accept the default (branch name), or use `--auto` to skip prompting entirely.
 
@@ -332,17 +326,13 @@ gh stack view --json
 
 ### `gh stack unstack`
 
-Remove a stack from local tracking and delete it on GitHub. Also available as `gh stack delete`.
+Remove a stack from local tracking. Also available as `gh stack delete`.
 
 ```
-gh stack unstack [flags] [branch]
+gh stack unstack [branch]
 ```
 
-If no branch is specified, uses the current branch to find the stack. Deletes the stack on GitHub first, then removes local tracking. Use `--local` to only remove the local tracking entry.
-
-| Flag | Description |
-|------|-------------|
-| `--local` | Only delete the stack locally (keep it on GitHub) |
+If no branch is specified, uses the current branch to find the stack. Removes the stack from local tracking (the `.git/gh-stack` file). This does not delete branches or PRs.
 
 | Argument | Description |
 |----------|-------------|
@@ -351,11 +341,8 @@ If no branch is specified, uses the current branch to find the stack. Deletes th
 **Examples:**
 
 ```sh
-# Remove the stack from local tracking and GitHub
+# Remove the current stack from local tracking
 gh stack unstack
-
-# Only remove local tracking
-gh stack unstack --local
 
 # Specify a branch to identify the stack
 gh stack unstack feature-auth
@@ -404,7 +391,7 @@ Share feedback about gh-stack.
 gh stack feedback [title]
 ```
 
-Opens a GitHub Discussion in the [gh-stack repository](https://github.com/github/gh-stack) to submit feedback. Optionally provide a title for the discussion post.
+Opens a GitHub Discussion in the [gh-stack repository](https://github.com/ryanclark/gh-stack) to submit feedback. Optionally provide a title for the discussion post.
 
 **Examples:**
 
@@ -457,7 +444,7 @@ gh stack init
 gh stack add api-routes
 #    ... write code, make commits ...
 
-# 4. Push everything and create Stacked PRs
+# 4. Push everything and create PRs
 gh stack submit
 
 # 5. Reviewer requests changes on the first PR
@@ -539,4 +526,3 @@ See [CODEOWNERS](CODEOWNERS)
 
 See [SUPPORT.md](SUPPORT.md)
 
-Please note that the Stacked PRs feature is currently in private preview and **gh-stack** will not work without that feature enabled.

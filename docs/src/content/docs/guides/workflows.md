@@ -192,7 +192,7 @@ The `unstack` command deletes the stack on GitHub first, then removes local trac
 AI coding agents (like GitHub Copilot) can create and manage Stacked PRs on your behalf. Install the gh-stack skill to give them the context they need:
 
 ```sh
-npx skills add github/gh-stack
+npx skills add ryanclark/gh-stack
 ```
 
 With the skill installed, your agent can:

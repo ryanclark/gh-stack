@@ -8,7 +8,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/term"
 	"github.com/mgutz/ansi"
 
-	ghapi "github.com/github/gh-stack/internal/github"
+	ghapi "github.com/ryanclark/gh-stack/internal/github"
 )
 
 // Config holds shared state for all commands.

@@ -3,15 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/prompter"
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	"github.com/github/gh-stack/internal/github"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/stack"
 	"github.com/spf13/cobra"
 )
 
@@ -173,28 +170,18 @@ func runSubmit(cfg *config.Config, opts *submitOptions) error {
 			}
 
 			if pr.BaseRefName != baseBranch {
-				if s.ID != "" {
-					// PRs in an existing stack can't have their base updated
-					// via the API — the stack owns the base relationships.
-					cfg.Warningf("PR %s has base %q (expected %q) but cannot update while stacked",
-						cfg.PRLink(pr.Number, pr.URL), pr.BaseRefName, baseBranch)
+				if err := client.UpdatePRBase(pr.Number, baseBranch); err != nil {
+					cfg.Warningf("failed to update base branch for PR %s: %v",
+						cfg.PRLink(pr.Number, pr.URL), err)
 				} else {
-					if err := client.UpdatePRBase(pr.Number, baseBranch); err != nil {
-						cfg.Warningf("failed to update base branch for PR %s: %v",
-							cfg.PRLink(pr.Number, pr.URL), err)
-					} else {
-						cfg.Successf("Updated base branch for PR %s to %s",
-							cfg.PRLink(pr.Number, pr.URL), baseBranch)
-					}
+					cfg.Successf("Updated base branch for PR %s to %s",
+						cfg.PRLink(pr.Number, pr.URL), baseBranch)
 				}
 			} else {
 				cfg.Printf("PR %s for %s is up to date", cfg.PRLink(pr.Number, pr.URL), b.Branch)
 			}
 		}
 	}
-
-	// Create or update the stack on GitHub
-	syncStack(cfg, client, s)
 
 	// Update base commit hashes and sync PR state
 	updateBaseSHAs(s)
@@ -219,22 +206,9 @@ func defaultPRTitleBody(base, head string) (string, string) {
 	return humanize(head), ""
 }
 
-// generatePRBody builds a PR description from the commit body (if any)
-// and a footer linking to the CLI and feedback form.
+// generatePRBody returns the PR body from the commit body, or empty string.
 func generatePRBody(commitBody string) string {
-	var parts []string
-
-	if commitBody != "" {
-		parts = append(parts, commitBody)
-	}
-
-	footer := fmt.Sprintf(
-		"<sub>Stack created with <a href=\"https://github.com/github/gh-stack\">GitHub Stacks CLI</a> • <a href=\"%s\">Give Feedback 💬</a></sub>",
-		feedbackURL,
-	)
-	parts = append(parts, footer)
-
-	return strings.Join(parts, "\n\n---\n\n")
+	return commitBody
 }
 
 // humanize replaces hyphens and underscores with spaces.
@@ -247,126 +221,3 @@ func humanize(s string) string {
 	}, s)
 }
 
-// syncStack creates or updates a stack on GitHub from the active PRs.
-// If the stack already exists (s.ID is set), it calls the PUT endpoint with
-// the full list of PRs to keep the remote stack in sync. If no stack exists
-// yet, it calls POST to create one.
-// This is a best-effort operation: failures are reported as warnings but do
-// not cause the submit command to fail (the PRs are already created).
-func syncStack(cfg *config.Config, client github.ClientOps, s *stack.Stack) {
-	// Collect PR numbers in stack order (bottom to top).
-	var prNumbers []int
-	for _, b := range s.Branches {
-		if b.IsMerged() {
-			continue
-		}
-		if b.PullRequest != nil {
-			prNumbers = append(prNumbers, b.PullRequest.Number)
-		}
-	}
-
-	// The API requires at least 2 PRs to form a stack.
-	if len(prNumbers) < 2 {
-		return
-	}
-
-	if s.ID != "" {
-		updateStack(cfg, client, s, prNumbers)
-	} else {
-		createNewStack(cfg, client, s, prNumbers)
-	}
-}
-
-// updateStack calls the PUT endpoint to sync the full PR list for an existing stack.
-// If the remote stack was deleted (404), it clears the local ID and falls through
-// to createNewStack so the user doesn't need to re-run the command.
-func updateStack(cfg *config.Config, client github.ClientOps, s *stack.Stack, prNumbers []int) {
-	if err := client.UpdateStack(s.ID, prNumbers); err != nil {
-		var httpErr *api.HTTPError
-		if errors.As(err, &httpErr) {
-			switch httpErr.StatusCode {
-			case 404:
-				// Stack was deleted on GitHub — clear the stale ID and
-				// immediately try to re-create it.
-				s.ID = ""
-				createNewStack(cfg, client, s, prNumbers)
-			default:
-				cfg.Warningf("Failed to update stack on GitHub: %s", httpErr.Message)
-			}
-		} else {
-			cfg.Warningf("Failed to update stack on GitHub: %v", err)
-		}
-		return
-	}
-	cfg.Successf("Stack updated on GitHub with %d PRs", len(prNumbers))
-}
-
-// createNewStack calls the POST endpoint to create a new stack, handling the
-// three types of 422 errors the API may return.
-func createNewStack(cfg *config.Config, client github.ClientOps, s *stack.Stack, prNumbers []int) {
-	stackID, err := client.CreateStack(prNumbers)
-	if err == nil {
-		s.ID = strconv.Itoa(stackID)
-		cfg.Successf("Stack created on GitHub with %d PRs", len(prNumbers))
-		return
-	}
-
-	var httpErr *api.HTTPError
-	if !errors.As(err, &httpErr) {
-		cfg.Warningf("Failed to create stack on GitHub: %v", err)
-		return
-	}
-
-	switch httpErr.StatusCode {
-	case 422:
-		handleCreate422(cfg, httpErr, prNumbers)
-	case 404:
-		cfg.Warningf("Stacked PRs are not enabled for this repository")
-	default:
-		cfg.Warningf("Failed to create stack on GitHub: %s", httpErr.Message)
-	}
-}
-
-// handleCreate422 handles 422 errors from the create stack endpoint.
-// The three known error messages are:
-//   - "Stack must contain at least two pull requests"
-//   - "Pull requests must form a stack, where each PR's base ref is the previous PR's head ref"
-//   - "Pull requests #123, #124, #125 are already stacked"
-func handleCreate422(cfg *config.Config, httpErr *api.HTTPError, prNumbers []int) {
-	msg := httpErr.Message
-
-	if strings.Contains(msg, "already stacked") {
-		// Check if the error lists exactly the same PRs we're trying to
-		// stack. If so, they're already in a stack together — nothing to do.
-		// If only a subset matches, the PRs are in a different stack.
-		if allPRsInMessage(msg, prNumbers) {
-			cfg.Successf("Stack with %d PRs is up to date", len(prNumbers))
-			return
-		}
-		cfg.Warningf("One or more PRs are already part of a different stack on GitHub")
-		cfg.Printf("  To fix this, unstack the PRs from the web, then `%s`",
-			cfg.ColorCyan("gh stack submit"))
-		return
-	}
-
-	if strings.Contains(msg, "must form a stack") {
-		cfg.Warningf("Cannot create stack: %s", msg)
-		cfg.Printf("  Each PR's base branch must match the previous PR's head branch.")
-		return
-	}
-
-	// "at least two" or any other validation error
-	cfg.Warningf("Could not create stack: %s", msg)
-}
-
-// allPRsInMessage checks whether every PR number in prNumbers appears
-// in the error message (e.g. as "#65"). This distinguishes "our PRs are
-// already stacked together" from "some PRs are in a different stack."
-func allPRsInMessage(msg string, prNumbers []int) bool {
-	for _, n := range prNumbers {
-		if !strings.Contains(msg, fmt.Sprintf("#%d", n)) {
-			return false
-		}
-	}
-	return true
-}

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/github/gh-stack/cmd"
+	"github.com/ryanclark/gh-stack/cmd"
 )
 
 func main() {

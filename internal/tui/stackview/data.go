@@ -1,10 +1,10 @@
 package stackview
 
 import (
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	ghapi "github.com/github/gh-stack/internal/github"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	ghapi "github.com/ryanclark/gh-stack/internal/github"
+	"github.com/ryanclark/gh-stack/internal/stack"
 )
 
 // BranchNode holds all display data for a single branch in the stack.

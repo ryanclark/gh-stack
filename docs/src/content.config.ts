@@ -9,9 +9,7 @@ export const collections = {
 			extend: z.object({
 				banner: z.object({
 					content: z.string(),
-				}).default({
-					content: 'Stacked PRs is currently in private preview. <a href="https://gh.io/stacksbeta">Sign up for the waitlist →</a>',
-				}),
+				}).optional(),
 			}),
 		}),
 	}),

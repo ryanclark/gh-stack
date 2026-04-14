@@ -361,78 +361,104 @@ func (c *Client) FindPRByNumber(number int) (*PullRequest, error) {
 	}, nil
 }
 
-type RemoteStack struct {
-	ID           int   `json:"id"`
-	PullRequests []int `json:"pull_requests"`
+// FindPRByBaseBranch finds an open PR by base branch name.
+func (c *Client) FindPRByBaseBranch(base string) (*PullRequest, error) {
+	var query struct {
+		Repository struct {
+			PullRequests struct {
+				Nodes []PullRequest
+			} `graphql:"pullRequests(baseRefName: $base, states: [OPEN], first: 1)"`
+		} `graphql:"repository(owner: $owner, name: $name)"`
+	}
+
+	variables := map[string]interface{}{
+		"owner": graphql.String(c.owner),
+		"name":  graphql.String(c.repo),
+		"base":  graphql.String(base),
+	}
+
+	if err := c.gql.Query("FindPRByBaseBranch", &query, variables); err != nil {
+		return nil, fmt.Errorf("querying PRs by base: %w", err)
+	}
+
+	nodes := query.Repository.PullRequests.Nodes
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+
+	n := nodes[0]
+	return &PullRequest{
+		ID:              n.ID,
+		Number:          n.Number,
+		Title:           n.Title,
+		State:           n.State,
+		URL:             n.URL,
+		HeadRefName:     n.HeadRefName,
+		BaseRefName:     n.BaseRefName,
+		IsDraft:         n.IsDraft,
+		Merged:          n.Merged,
+		MergeQueueEntry: n.MergeQueueEntry,
+	}, nil
 }
 
-// ListStacks returns all stacks in the repository.
-// Returns an empty slice if no stacks exist.
-// A 404 response indicates stacked PRs are not enabled for this repository.
-func (c *Client) ListStacks() ([]RemoteStack, error) {
-	path := fmt.Sprintf("repos/%s/%s/cli_internal/pulls/stacks", c.owner, c.repo)
-	var stacks []RemoteStack
-	if err := c.rest.Get(path, &stacks); err != nil {
-		return nil, err
-	}
-	if stacks == nil {
-		stacks = []RemoteStack{}
-	}
-	return stacks, nil
-}
-
-// CreateStack creates a stack on GitHub from an ordered list of PR numbers.
-// The PR numbers must be ordered from bottom to top of the stack and must
-// form a valid base-to-head chain. Returns the server-assigned stack ID.
-func (c *Client) CreateStack(prNumbers []int) (int, error) {
-	type createStackRequest struct {
-		PullRequestNumbers []int `json:"pull_request_numbers"`
-	}
-
-	body, err := json.Marshal(createStackRequest{PullRequestNumbers: prNumbers})
+// DiscoverPRStack discovers a stack of PRs by following the base/head
+// branch chain from a starting PR number. It walks down (toward trunk)
+// by finding PRs whose head matches each PR's base, and up (away from
+// trunk) by finding PRs whose base matches each PR's head.
+// Returns the trunk branch name and the ordered list of PRs (bottom to top).
+func DiscoverPRStack(client ClientOps, prNumber int) (string, []*PullRequest, error) {
+	startPR, err := client.FindPRByNumber(prNumber)
 	if err != nil {
-		return 0, fmt.Errorf("marshaling request: %w", err)
+		return "", nil, fmt.Errorf("fetching PR #%d: %w", prNumber, err)
+	}
+	if startPR == nil {
+		return "", nil, fmt.Errorf("PR #%d not found", prNumber)
 	}
 
-	path := fmt.Sprintf("repos/%s/%s/cli_internal/pulls/stacks", c.owner, c.repo)
+	seen := map[int]bool{startPR.Number: true}
 
-	var response struct {
-		ID int `json:"id"`
+	// Walk down toward trunk: find PRs whose head is our base.
+	// Uses FindAnyPRForBranch to also discover merged parent PRs.
+	var parents []*PullRequest
+	current := startPR
+	for {
+		parent, err := client.FindAnyPRForBranch(current.BaseRefName)
+		if err != nil || parent == nil || seen[parent.Number] {
+			break
+		}
+		seen[parent.Number] = true
+		parents = append(parents, parent)
+		current = parent
 	}
 
-	if err := c.rest.Post(path, bytes.NewReader(body), &response); err != nil {
-		return 0, err
+	// Reverse parents to bottom-to-top order.
+	for i, j := 0, len(parents)-1; i < j; i, j = i+1, j-1 {
+		parents[i], parents[j] = parents[j], parents[i]
 	}
 
-	return response.ID, nil
+	// Trunk is the base of the bottommost PR.
+	trunk := startPR.BaseRefName
+	if len(parents) > 0 {
+		trunk = parents[0].BaseRefName
+	}
+
+	// Build chain: parents + start PR.
+	chain := make([]*PullRequest, 0, len(parents)+1)
+	chain = append(chain, parents...)
+	chain = append(chain, startPR)
+
+	// Walk up away from trunk: find open PRs whose base is our head.
+	current = startPR
+	for {
+		child, err := client.FindPRByBaseBranch(current.HeadRefName)
+		if err != nil || child == nil || seen[child.Number] {
+			break
+		}
+		seen[child.Number] = true
+		chain = append(chain, child)
+		current = child
+	}
+
+	return trunk, chain, nil
 }
 
-// UpdateStack adds pull requests to an existing stack on GitHub.
-// The stack is identified by stackID. The full list of PR numbers in the
-// updated stack must be provided, including existing and new PRs, ordered
-// from bottom to top.
-func (c *Client) UpdateStack(stackID string, prNumbers []int) error {
-	type updateStackRequest struct {
-		PullRequestNumbers []int `json:"pull_request_numbers"`
-	}
-
-	body, err := json.Marshal(updateStackRequest{PullRequestNumbers: prNumbers})
-	if err != nil {
-		return fmt.Errorf("marshaling request: %w", err)
-	}
-
-	path := fmt.Sprintf("repos/%s/%s/cli_internal/pulls/stacks/%s", c.owner, c.repo, stackID)
-
-	var response struct {
-		ID int `json:"id"`
-	}
-
-	return c.rest.Put(path, bytes.NewReader(body), &response)
-}
-
-// DeleteStack deletes a stack on GitHub.
-// The stack is identified by stackID. Returns nil on success (204).
-func (c *Client) DeleteStack(stackID string) error {
-	path := fmt.Sprintf("repos/%s/%s/cli_internal/pulls/stacks/%s", c.owner, c.repo, stackID)
-	return c.rest.Delete(path, nil)
-}

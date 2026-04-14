@@ -25,7 +25,7 @@ export default defineConfig({
 				'./src/styles/custom.css',
 			],
 			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/github/gh-stack' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/ryanclark/gh-stack' },
 			],
 			tableOfContents: {
 				minHeadingLevel: 2,

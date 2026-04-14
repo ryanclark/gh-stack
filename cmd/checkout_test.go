@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cli/go-gh/v2/pkg/api"
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	"github.com/github/gh-stack/internal/github"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/github"
+	"github.com/ryanclark/gh-stack/internal/stack"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -145,30 +144,35 @@ func TestCheckout_BranchNotFound(t *testing.T) {
 	assert.Contains(t, output, "no locally tracked stack found")
 }
 
-// --- Remote checkout tests (numeric target, local miss → API fallback) ---
+// --- Remote checkout tests (numeric target, local miss → chain discovery) ---
 
-func TestCheckout_NumericTarget_StacksNotAvailable(t *testing.T) {
-	gitDir := t.TempDir()
-	restore := git.SetOps(&git.MockOps{
-		GitDirFn:        func() (string, error) { return gitDir, nil },
-		CurrentBranchFn: func() (string, error) { return "main", nil },
-	})
-	defer restore()
-
-	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
-
-	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return nil, &api.HTTPError{StatusCode: 404, Message: "Not Found"}
+// chainDiscoveryMock creates a MockClient with PR chain discovery support.
+// prs maps PR number to PullRequest. The chain is discovered via
+// FindPRByNumber (start), FindAnyPRForBranch (walk down), FindPRByBaseBranch (walk up).
+func chainDiscoveryMock(prs map[int]*github.PullRequest) *github.MockClient {
+	byHead := make(map[string]*github.PullRequest)
+	byBase := make(map[string]*github.PullRequest)
+	for _, pr := range prs {
+		byHead[pr.HeadRefName] = pr
+		if pr.State != "MERGED" {
+			byBase[pr.BaseRefName] = pr
+		}
+	}
+	return &github.MockClient{
+		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
+			pr, ok := prs[number]
+			if !ok {
+				return nil, fmt.Errorf("PR #%d not found", number)
+			}
+			return pr, nil
+		},
+		FindAnyPRForBranchFn: func(branch string) (*github.PullRequest, error) {
+			return byHead[branch], nil
+		},
+		FindPRByBaseBranchFn: func(base string) (*github.PullRequest, error) {
+			return byBase[base], nil
 		},
 	}
-
-	err := runCheckout(cfg, &checkoutOptions{target: "123"})
-	output := collectOutput(cfg, outR, errR)
-
-	assert.ErrorIs(t, err, ErrAPIFailure)
-	assert.Contains(t, output, "not enabled")
 }
 
 func TestCheckout_NumericTarget_PRNotInStack(t *testing.T) {
@@ -181,14 +185,11 @@ func TestCheckout_NumericTarget_PRNotInStack(t *testing.T) {
 
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
+	// Single PR with no chain — not a stack
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 1, PullRequests: []int{10, 11}},
-			}, nil
-		},
-	}
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		99: {ID: "PR_99", Number: 99, HeadRefName: "feat-solo", BaseRefName: "main", State: "OPEN", URL: "https://github.com/o/r/pull/99"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "99"})
 	output := collectOutput(cfg, outR, errR)
@@ -241,25 +242,11 @@ func TestCheckout_NumericTarget_NewStack(t *testing.T) {
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 42, PullRequests: []int{10, 11, 12}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", URL: "https://github.com/o/r/pull/11"},
-				12: {ID: "PR_12", Number: 12, HeadRefName: "feat-3", BaseRefName: "feat-2", URL: "https://github.com/o/r/pull/12"},
-			}
-			pr, ok := prs[number]
-			if !ok {
-				return nil, fmt.Errorf("PR #%d not found", number)
-			}
-			return pr, nil
-		},
-	}
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", State: "OPEN", URL: "https://github.com/o/r/pull/10"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
+		12: {ID: "PR_12", Number: 12, HeadRefName: "feat-3", BaseRefName: "feat-2", State: "OPEN", URL: "https://github.com/o/r/pull/12"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "11"})
 	output := collectOutput(cfg, outR, errR)
@@ -279,7 +266,6 @@ func TestCheckout_NumericTarget_NewStack(t *testing.T) {
 	sf, loadErr := stack.Load(gitDir)
 	require.NoError(t, loadErr)
 	require.Len(t, sf.Stacks, 1)
-	assert.Equal(t, "42", sf.Stacks[0].ID)
 	assert.Equal(t, "main", sf.Stacks[0].Trunk.Branch)
 	assert.Len(t, sf.Stacks[0].Branches, 3)
 	assert.Equal(t, 10, sf.Stacks[0].Branches[0].PullRequest.Number)
@@ -296,7 +282,6 @@ func TestCheckout_NumericTarget_BranchExistsNoStack(t *testing.T) {
 		GitDirFn:        func() (string, error) { return gitDir, nil },
 		CurrentBranchFn: func() (string, error) { return "main", nil },
 		BranchExistsFn: func(name string) bool {
-			// feat-1 exists locally but feat-2 does not
 			return name == "main" || name == "feat-1"
 		},
 		FetchFn: func(remote string) error { return nil },
@@ -329,20 +314,10 @@ func TestCheckout_NumericTarget_BranchExistsNoStack(t *testing.T) {
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 99, PullRequests: []int{10, 11}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", URL: "https://github.com/o/r/pull/11"},
-			}
-			return prs[number], nil
-		},
-	}
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", State: "OPEN", URL: "https://github.com/o/r/pull/10"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "11"})
 	output := collectOutput(cfg, outR, errR)
@@ -381,7 +356,6 @@ func TestCheckout_NumericTarget_AlreadyInMatchingStack(t *testing.T) {
 
 	// Stack already exists locally with matching PRs
 	writeStackFile(t, gitDir, stack.Stack{
-		ID:    "42",
 		Trunk: stack.BranchRef{Branch: "main"},
 		Branches: []stack.BranchRef{
 			{Branch: "feat-1", PullRequest: &stack.PullRequestRef{Number: 10, URL: "https://github.com/o/r/pull/10"}},
@@ -391,7 +365,6 @@ func TestCheckout_NumericTarget_AlreadyInMatchingStack(t *testing.T) {
 
 	cfg, outR, errR := config.NewTestConfig()
 	// PR 10 is found locally → no API call needed
-	// No GitHubClientOverride means API calls would panic
 	err := runCheckout(cfg, &checkoutOptions{target: "10"})
 	output := collectOutput(cfg, outR, errR)
 
@@ -401,8 +374,7 @@ func TestCheckout_NumericTarget_AlreadyInMatchingStack(t *testing.T) {
 }
 
 func TestCheckout_NumericTarget_LocalMiss_RemoteMatch(t *testing.T) {
-	// PR 11 is NOT in any local stack, but IS in a remote stack.
-	// The API should be called as a fallback.
+	// PR 11 is NOT in any local stack, but IS discoverable via chain.
 	gitDir := t.TempDir()
 	var checkedOut string
 
@@ -441,35 +413,22 @@ func TestCheckout_NumericTarget_LocalMiss_RemoteMatch(t *testing.T) {
 		},
 	})
 
-	apiCalled := false
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			apiCalled = true
-			return []github.RemoteStack{
-				{ID: 99, PullRequests: []int{10, 11}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", URL: "https://github.com/o/r/pull/11"},
-			}
-			return prs[number], nil
-		},
-	}
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", State: "OPEN", URL: "https://github.com/o/r/pull/10"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "11"})
 	_ = collectOutput(cfg, outR, errR)
 
 	require.NoError(t, err)
-	assert.True(t, apiCalled, "should have called ListStacks API when local miss")
 	assert.Equal(t, "feat-2", checkedOut)
 }
 
 func TestCheckout_NumericTarget_FallbackToBranchName(t *testing.T) {
-	// PR 999 is not in any local stack and not in any remote stack,
-	// but "999" happens to be a branch name in a local stack
+	// PR 999 is not in any chain (single PR), but "999" happens to be
+	// a branch name in a local stack
 	gitDir := t.TempDir()
 	var checkedOut string
 
@@ -491,11 +450,10 @@ func TestCheckout_NumericTarget_FallbackToBranchName(t *testing.T) {
 	})
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{}, nil // no remote stacks
-		},
-	}
+	// Chain discovery finds only 1 PR (not a stack), falls through to branch name
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		999: {ID: "PR_999", Number: 999, HeadRefName: "feat-solo", BaseRefName: "main", State: "OPEN", URL: "https://github.com/o/r/pull/999"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "999"})
 	output := collectOutput(cfg, outR, errR)
@@ -516,7 +474,6 @@ func TestCheckout_NumericTarget_CompositionMismatch_NonInteractive(t *testing.T)
 
 	// Local stack has PRs 10, 11
 	writeStackFile(t, gitDir, stack.Stack{
-		ID:    "42",
 		Trunk: stack.BranchRef{Branch: "main"},
 		Branches: []stack.BranchRef{
 			{Branch: "feat-1", PullRequest: &stack.PullRequestRef{Number: 10}},
@@ -525,24 +482,14 @@ func TestCheckout_NumericTarget_CompositionMismatch_NonInteractive(t *testing.T)
 	})
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			// Remote stack has PRs 10, 11, 12 (extra PR added)
-			return []github.RemoteStack{
-				{ID: 42, PullRequests: []int{10, 11, 12}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1"},
-				12: {ID: "PR_12", Number: 12, HeadRefName: "feat-3", BaseRefName: "feat-2"},
-			}
-			return prs[number], nil
-		},
-	}
+	// Remote chain has PRs 10, 11, 12 (extra PR added)
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", State: "OPEN"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN"},
+		12: {ID: "PR_12", Number: 12, HeadRefName: "feat-3", BaseRefName: "feat-2", State: "OPEN"},
+	})
 
-	// PR 12 not found locally → remote lookup → finds stack → mismatch with local
+	// PR 12 not found locally → chain discovery → finds stack → mismatch with local
 	err := runCheckout(cfg, &checkoutOptions{target: "12"})
 	output := collectOutput(cfg, outR, errR)
 
@@ -588,20 +535,11 @@ func TestCheckout_NumericTarget_ClosedMergedPR(t *testing.T) {
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 50, PullRequests: []int{10, 11}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
-			}
-			return prs[number], nil
-		},
-	}
+	// PR 10 is merged, PR 11 is open. Chain discovery should find both.
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "11"})
 	output := collectOutput(cfg, outR, errR)
@@ -618,72 +556,6 @@ func TestCheckout_NumericTarget_ClosedMergedPR(t *testing.T) {
 	assert.False(t, sf.Stacks[0].Branches[1].PullRequest.Merged)
 }
 
-func TestCheckout_NumericTarget_MergedBranchDeletedFromRemote(t *testing.T) {
-	gitDir := t.TempDir()
-	var checkedOut string
-
-	restore := git.SetOps(&git.MockOps{
-		GitDirFn:        func() (string, error) { return gitDir, nil },
-		CurrentBranchFn: func() (string, error) { return "main", nil },
-		BranchExistsFn: func(name string) bool {
-			return name == "main"
-		},
-		FetchFn: func(remote string) error { return nil },
-		CreateBranchFn: func(name, base string) error {
-			// Simulate merged branch deleted from remote: origin/feat-1 doesn't exist
-			if base == "origin/feat-1" {
-				return fmt.Errorf("failed to run git: fatal: not a valid object name: 'origin/feat-1'")
-			}
-			return nil
-		},
-		SetUpstreamTrackingFn: func(branch, remote string) error { return nil },
-		ResolveRemoteFn: func(branch string) (string, error) {
-			return "origin", nil
-		},
-		CheckoutBranchFn: func(name string) error {
-			checkedOut = name
-			return nil
-		},
-		RevParseFn: func(ref string) (string, error) {
-			return "abc123", nil
-		},
-		RevParseMultiFn: func(refs []string) ([]string, error) {
-			shas := make([]string, len(refs))
-			for i := range refs {
-				shas[i] = "abc123"
-			}
-			return shas, nil
-		},
-	})
-	defer restore()
-
-	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
-
-	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 60, PullRequests: []int{10, 11}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", State: "OPEN", URL: "https://github.com/o/r/pull/11"},
-			}
-			return prs[number], nil
-		},
-	}
-
-	err := runCheckout(cfg, &checkoutOptions{target: "11"})
-	output := collectOutput(cfg, outR, errR)
-
-	require.NoError(t, err)
-	assert.Equal(t, "feat-2", checkedOut)
-	assert.Contains(t, output, "Skipping merged branch feat-1")
-	assert.Contains(t, output, "Imported stack with 2 branches")
-}
-
 func TestCheckout_NumericTarget_AllPRsMerged(t *testing.T) {
 	gitDir := t.TempDir()
 
@@ -696,20 +568,10 @@ func TestCheckout_NumericTarget_AllPRsMerged(t *testing.T) {
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 70, PullRequests: []int{10, 11}},
-			}, nil
-		},
-		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
-			prs := map[int]*github.PullRequest{
-				10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
-				11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/11"},
-			}
-			return prs[number], nil
-		},
-	}
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		10: {ID: "PR_10", Number: 10, HeadRefName: "feat-1", BaseRefName: "main", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/10"},
+		11: {ID: "PR_11", Number: 11, HeadRefName: "feat-2", BaseRefName: "feat-1", Merged: true, State: "MERGED", URL: "https://github.com/o/r/pull/11"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "11"})
 	output := collectOutput(cfg, outR, errR)
@@ -731,7 +593,7 @@ func TestCheckout_NumericTarget_APIError(t *testing.T) {
 
 	cfg, outR, errR := config.NewTestConfig()
 	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
+		FindPRByNumberFn: func(number int) (*github.PullRequest, error) {
 			return nil, fmt.Errorf("network error")
 		},
 	}
@@ -740,50 +602,10 @@ func TestCheckout_NumericTarget_APIError(t *testing.T) {
 	output := collectOutput(cfg, outR, errR)
 
 	assert.ErrorIs(t, err, ErrAPIFailure)
-	assert.Contains(t, output, "failed to list stacks")
+	assert.Contains(t, output, "failed to discover stack")
 }
 
-func TestCheckout_NumericTarget_SyncsState(t *testing.T) {
-	gitDir := t.TempDir()
-
-	restore := git.SetOps(&git.MockOps{
-		GitDirFn:        func() (string, error) { return gitDir, nil },
-		CurrentBranchFn: func() (string, error) { return "main", nil },
-		CheckoutBranchFn: func(name string) error {
-			return nil
-		},
-		RevParseFn: func(ref string) (string, error) {
-			return "abc123", nil
-		},
-		RevParseMultiFn: func(refs []string) ([]string, error) {
-			shas := make([]string, len(refs))
-			for i := range refs {
-				shas[i] = "abc123"
-			}
-			return shas, nil
-		},
-	})
-	defer restore()
-
-	// Existing stack with stale PR data — PR 10 found locally
-	writeStackFile(t, gitDir, stack.Stack{
-		ID:    "42",
-		Trunk: stack.BranchRef{Branch: "main"},
-		Branches: []stack.BranchRef{
-			{Branch: "feat-1", PullRequest: &stack.PullRequestRef{Number: 10, URL: "old-url"}},
-			{Branch: "feat-2", PullRequest: &stack.PullRequestRef{Number: 11, URL: "old-url"}},
-		},
-	})
-
-	cfg, outR, errR := config.NewTestConfig()
-	// PR 10 is found locally → no API call needed, resolved directly
-	err := runCheckout(cfg, &checkoutOptions{target: "10"})
-	_ = collectOutput(cfg, outR, errR)
-
-	require.NoError(t, err)
-}
-
-func TestCheckout_NumericTarget_EmptyStacks(t *testing.T) {
+func TestCheckout_NumericTarget_EmptyChain(t *testing.T) {
 	gitDir := t.TempDir()
 	restore := git.SetOps(&git.MockOps{
 		GitDirFn:        func() (string, error) { return gitDir, nil },
@@ -794,11 +616,10 @@ func TestCheckout_NumericTarget_EmptyStacks(t *testing.T) {
 	require.NoError(t, stack.Save(gitDir, &stack.StackFile{SchemaVersion: 1, Stacks: []stack.Stack{}}))
 
 	cfg, outR, errR := config.NewTestConfig()
-	cfg.GitHubClientOverride = &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{}, nil // no stacks at all
-		},
-	}
+	// PR exists but has no chain (single PR)
+	cfg.GitHubClientOverride = chainDiscoveryMock(map[int]*github.PullRequest{
+		123: {ID: "PR_123", Number: 123, HeadRefName: "solo", BaseRefName: "main", State: "OPEN"},
+	})
 
 	err := runCheckout(cfg, &checkoutOptions{target: "123"})
 	output := collectOutput(cfg, outR, errR)
@@ -822,7 +643,6 @@ func TestCheckout_NumericTarget_AlreadyOnTarget(t *testing.T) {
 	defer restore()
 
 	writeStackFile(t, gitDir, stack.Stack{
-		ID:    "42",
 		Trunk: stack.BranchRef{Branch: "main"},
 		Branches: []stack.BranchRef{
 			{Branch: "feat-1", PullRequest: &stack.PullRequestRef{Number: 10, URL: "https://github.com/o/r/pull/10"}},
@@ -900,32 +720,4 @@ func TestStackCompositionMatches(t *testing.T) {
 			assert.Equal(t, tt.matches, result)
 		})
 	}
-}
-
-func TestFindRemoteStackForPR(t *testing.T) {
-	mock := &github.MockClient{
-		ListStacksFn: func() ([]github.RemoteStack, error) {
-			return []github.RemoteStack{
-				{ID: 1, PullRequests: []int{10, 11}},
-				{ID: 2, PullRequests: []int{20, 21, 22}},
-			}, nil
-		},
-	}
-
-	// Found in first stack
-	rs, err := findRemoteStackForPR(mock, 11)
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	assert.Equal(t, 1, rs.ID)
-
-	// Found in second stack
-	rs, err = findRemoteStackForPR(mock, 21)
-	require.NoError(t, err)
-	require.NotNil(t, rs)
-	assert.Equal(t, 2, rs.ID)
-
-	// Not found
-	rs, err = findRemoteStackForPR(mock, 99)
-	require.NoError(t, err)
-	assert.Nil(t, rs)
 }

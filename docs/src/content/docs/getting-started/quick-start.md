@@ -12,7 +12,7 @@ description: Install the gh stack CLI and create your first Stacked PR in minute
 ## Install the CLI Extension
 
 ```sh
-gh extension install github/gh-stack
+gh extension install ryanclark/gh-stack
 ```
 
 ## Set Up AI Agent Integration
@@ -20,7 +20,7 @@ gh extension install github/gh-stack
 If you use AI coding agents (like GitHub Copilot), install the gh-stack skill so they know how to work with Stacked PRs:
 
 ```sh
-npx skills add github/gh-stack
+npx skills add ryanclark/gh-stack
 ```
 
 This gives your AI agent the context it needs to create, manage, and navigate stacks on your behalf.

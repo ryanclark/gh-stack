@@ -4,9 +4,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/stack"
 	"github.com/stretchr/testify/assert"
 )
 

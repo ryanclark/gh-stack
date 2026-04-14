@@ -9,14 +9,14 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/github/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/config"
 	"github.com/spf13/cobra"
 )
 
 const (
 	defaultAliasName     = "gs"
-	wrapperMarkerLine    = "# installed by github/gh-stack" // used to identify our own scripts
-	markedWrapperContent = "#!/bin/sh\n# installed by github/gh-stack\nexec gh stack \"$@\"\n"
+	wrapperMarkerLine    = "# installed by ryanclark/gh-stack" // used to identify our own scripts
+	markedWrapperContent = "#!/bin/sh\n# installed by ryanclark/gh-stack\nexec gh stack \"$@\"\n"
 )
 
 var validAliasName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)

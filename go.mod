@@ -1,4 +1,4 @@
-module github.com/github/gh-stack
+module github.com/ryanclark/gh-stack
 
 go 1.25.7
 

@@ -1,7 +1,7 @@
 ## Contributing
 
-[fork]: https://github.com/github/gh-stack/fork
-[pr]: https://github.com/github/gh-stack/compare
+[fork]: https://github.com/ryanclark/gh-stack/fork
+[pr]: https://github.com/ryanclark/gh-stack/compare
 
 Hi there! We're thrilled that you'd like to contribute to this project. Your help is essential for keeping it great.
 
@@ -18,7 +18,7 @@ Please note that this project is released with a [Contributor Code of Conduct](C
 
 ```sh
 # Clone the repository (or your fork)
-git clone https://github.com/github/gh-stack.git
+git clone https://github.com/ryanclark/gh-stack.git
 cd gh-stack
 
 # Download dependencies

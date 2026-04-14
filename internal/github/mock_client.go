@@ -7,13 +7,10 @@ type MockClient struct {
 	FindPRForBranchFn        func(string) (*PullRequest, error)
 	FindAnyPRForBranchFn     func(string) (*PullRequest, error)
 	FindPRByNumberFn         func(int) (*PullRequest, error)
+	FindPRByBaseBranchFn     func(string) (*PullRequest, error)
 	FindPRDetailsForBranchFn func(string) (*PRDetails, error)
 	CreatePRFn               func(string, string, string, string, bool) (*PullRequest, error)
 	UpdatePRBaseFn           func(int, string) error
-	ListStacksFn             func() ([]RemoteStack, error)
-	CreateStackFn            func([]int) (int, error)
-	UpdateStackFn            func(string, []int) error
-	DeleteStackFn            func(string) error
 }
 
 // Compile-time check that MockClient satisfies ClientOps.
@@ -40,6 +37,13 @@ func (m *MockClient) FindPRByNumber(number int) (*PullRequest, error) {
 	return nil, nil
 }
 
+func (m *MockClient) FindPRByBaseBranch(base string) (*PullRequest, error) {
+	if m.FindPRByBaseBranchFn != nil {
+		return m.FindPRByBaseBranchFn(base)
+	}
+	return nil, nil
+}
+
 func (m *MockClient) FindPRDetailsForBranch(branch string) (*PRDetails, error) {
 	if m.FindPRDetailsForBranchFn != nil {
 		return m.FindPRDetailsForBranchFn(branch)
@@ -57,34 +61,6 @@ func (m *MockClient) CreatePR(base, head, title, body string, draft bool) (*Pull
 func (m *MockClient) UpdatePRBase(number int, base string) error {
 	if m.UpdatePRBaseFn != nil {
 		return m.UpdatePRBaseFn(number, base)
-	}
-	return nil
-}
-
-func (m *MockClient) ListStacks() ([]RemoteStack, error) {
-	if m.ListStacksFn != nil {
-		return m.ListStacksFn()
-	}
-	return nil, nil
-}
-
-func (m *MockClient) CreateStack(prNumbers []int) (int, error) {
-	if m.CreateStackFn != nil {
-		return m.CreateStackFn(prNumbers)
-	}
-	return 0, nil
-}
-
-func (m *MockClient) UpdateStack(stackID string, prNumbers []int) error {
-	if m.UpdateStackFn != nil {
-		return m.UpdateStackFn(stackID, prNumbers)
-	}
-	return nil
-}
-
-func (m *MockClient) DeleteStack(stackID string) error {
-	if m.DeleteStackFn != nil {
-		return m.DeleteStackFn(stackID)
 	}
 	return nil
 }

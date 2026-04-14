@@ -9,9 +9,9 @@ import (
 
 	"github.com/AlecAivazis/survey/v2/terminal"
 	"github.com/cli/go-gh/v2/pkg/prompter"
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
-	"github.com/github/gh-stack/internal/stack"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/stack"
 )
 
 // ErrSilent indicates the error has already been printed to the user.

@@ -3,8 +3,8 @@ package cmd
 import (
 	"strconv"
 
-	"github.com/github/gh-stack/internal/config"
-	"github.com/github/gh-stack/internal/git"
+	"github.com/ryanclark/gh-stack/internal/config"
+	"github.com/ryanclark/gh-stack/internal/git"
 	"github.com/spf13/cobra"
 )
 

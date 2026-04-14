@@ -234,7 +234,6 @@ func TestLoad_Save_RoundTrip(t *testing.T) {
 			Repository: "owner/repo",
 			Stacks: []Stack{
 				{
-					ID:     "s1",
 					Prefix: "feat",
 					Trunk:  BranchRef{Branch: "main", Head: "abc123"},
 					Branches: []BranchRef{
@@ -255,7 +254,6 @@ func TestLoad_Save_RoundTrip(t *testing.T) {
 		require.Len(t, loaded.Stacks, 1)
 
 		s := loaded.Stacks[0]
-		assert.Equal(t, "s1", s.ID)
 		assert.Equal(t, "feat", s.Prefix)
 		assert.Equal(t, "main", s.Trunk.Branch)
 		assert.Equal(t, "abc123", s.Trunk.Head)
